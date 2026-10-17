@@ -23,6 +23,8 @@ log = logging.getLogger("app.video_import")
 
 Platform = Literal["youtube", "tiktok", "unknown"]
 
+GEMINI_TIMEOUT_MS = 240_000
+
 _YT_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 
@@ -132,7 +134,8 @@ def _extract(build_parts, source_url: str | None, fail_message: str) -> list[Pla
     from google import genai  # imported lazily so tests and mock mode don't need it
     from google.genai import types
 
-    client = genai.Client(api_key=settings.gemini_api_key)
+    # A stuck call would leave the import "running" forever; the longest real video so far took ~130 s.
+    client = genai.Client(api_key=settings.gemini_api_key, http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS))
     contents = types.Content(role="user", parts=build_parts(types))
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,

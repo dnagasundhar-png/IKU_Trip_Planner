@@ -2,7 +2,7 @@
 // returns is { error, message }, and `message` is written to be shown to the user.
 import { loadCities } from "./destinations"
 import { addDays, daysBetween, suggestCitiesFor } from "./route"
-import { saveTrip } from "./trip-store"
+import { loadTrip, saveTrip } from "./trip-store"
 import type { Itinerary, ItineraryDay, ItemStatus, Place, Trip } from "./types"
 
 // Inlined at build time (must be written out literally). Defaults to the live API.
@@ -21,7 +21,9 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
-    res = await fetch(BASE + path, { ...init, headers: { "Content-Type": "application/json", ...init?.headers } })
+    // File uploads (FormData) set their own multipart Content-Type; everything else is JSON.
+    const json = !(init?.body instanceof FormData)
+    res = await fetch(BASE + path, { ...init, headers: { ...(json ? { "Content-Type": "application/json" } : {}), ...init?.headers } })
   } catch {
     throw new ApiError(0, "network", "Can't reach the server. Check your connection and try again.")
   }
@@ -139,7 +141,23 @@ async function payload(trip: Trip): Promise<ApiTripIn> {
  * user changed anything since. Changing the plan (dates, cities, interests...) makes the server
  * drop the old itinerary, so the itinerary page regenerates. Returns the saved trip.
  */
-export async function syncTrip(trip: Trip): Promise<Trip> {
+export function syncTrip(trip: Trip): Promise<Trip> {
+  // One sync at a time. Two overlapping first syncs (React runs effects twice in development; a quick
+  // double navigation in production) would otherwise both POST and create two trips, and imported
+  // places could end up on a different trip from the itinerary. A queued call picks up the id the
+  // earlier one saved, so it PATCHes that trip instead of creating another.
+  const run = syncQueue.then(() => {
+    const stored = loadTrip()
+    const fresh = !isServerTrip(trip.id) && isServerTrip(stored.id) ? { ...trip, id: stored.id, synced: stored.synced } : trip
+    return syncNow(fresh)
+  })
+  syncQueue = run.catch(() => undefined)
+  return run
+}
+
+let syncQueue: Promise<unknown> = Promise.resolve()
+
+async function syncNow(trip: Trip): Promise<Trip> {
   if (isDemoTrip(trip.id)) return trip
   const body = await payload(trip)
   const key = JSON.stringify(body)
@@ -235,4 +253,61 @@ export async function getItinerary(tripId: string): Promise<Itinerary | null> {
 /** Plan the trip with Gemini. Slow (roughly 25-60 s): show a loading state. */
 export async function generateItinerary(tripId: string): Promise<Itinerary> {
   return toItinerary(await request<ApiItinerary>(`/trips/${tripId}/itinerary`, send("POST")))
+}
+
+// --- Imports (D's importer: YouTube / TikTok links, screenshots, pasted captions) -----
+
+export type ImportStatus = "pending" | "running" | "done" | "failed"
+
+export type ImportJob = {
+  jobId: string
+  status: ImportStatus
+  platform: string // youtube | tiktok | text | screenshot
+  link: string | null
+  places: Place[]
+  error: string | null // code when status is "failed", e.g. "no_places", "gemini_quota"
+  message: string | null // safe to show; also set on some "done" jobs (a TikTok slideshow asks for screenshots)
+}
+
+type ApiImportJob = Omit<ImportJob, "places"> & { places: ApiPlace[] }
+
+export const MAX_SCREENSHOTS = 10
+export const MAX_SCREENSHOT_MB = 10
+export const MAX_CAPTION_CHARS = 10_000
+
+const toJob = (j: ApiImportJob): ImportJob => ({ ...j, places: j.places.map(toPlace) })
+
+/** A YouTube or TikTok link (short links like youtu.be / vm.tiktok.com are fine). Returns at once; poll the job. */
+export async function importLink(link: string, tripId?: string): Promise<ImportJob> {
+  return toJob(await request<ApiImportJob>("/imports", send("POST", { link, tripId })))
+}
+
+/** A pasted caption or any text that mentions places. */
+export async function importText(text: string, tripId?: string, sourceUrl?: string): Promise<ImportJob> {
+  return toJob(await request<ApiImportJob>("/imports/text", send("POST", { text, tripId, sourceUrl })))
+}
+
+/** 1-10 screenshots (JPEG/PNG/WebP/HEIC, 10 MB each), read together, so a whole TikTok slideshow works. */
+export async function importScreenshots(files: File[], tripId?: string): Promise<ImportJob> {
+  const form = new FormData()
+  for (const f of files) form.append("files", f)
+  if (tripId) form.append("tripId", tripId)
+  return toJob(await request<ApiImportJob>("/imports/images", { method: "POST", body: form }))
+}
+
+export async function getImport(jobId: string): Promise<ImportJob> {
+  return toJob(await request<ApiImportJob>(`/imports/${jobId}`))
+}
+
+/** Save the places the user ticked. The server drops any older itinerary, so the next one includes them. */
+export async function savePlaces(tripId: string, places: Place[]): Promise<Place[]> {
+  const body = {
+    places: places.map((p) => ({
+      id: p.id, name: p.name, nameEnglish: p.nameEnglish, category: p.category || null,
+      lat: p.lat, lng: p.lng, confidence: p.confidence,
+      sourceUrl: p.sourceUrl ?? null, timestamp: p.timestamp ?? null, tip: p.tip ?? null,
+    })),
+  }
+  const { places: saved } = await request<{ places: ApiPlace[] }>(`/trips/${tripId}/places`, send("POST", body))
+  return saved.map(toPlace)
 }

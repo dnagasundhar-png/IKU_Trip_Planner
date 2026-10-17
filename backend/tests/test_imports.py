@@ -435,3 +435,38 @@ def test_blank_fallback_setting_uses_default():
     from app.config import Settings
     s = Settings(gemini_model="", gemini_fallback_models=" ")
     assert s.gemini_models == ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"]
+
+
+@needs_db
+def test_saving_places_drops_the_old_itinerary_and_protects_the_demo(monkeypatch):
+    """Places imported after an itinerary exists must be planned in, so saving them clears the old plan."""
+    from sqlalchemy import delete, select
+
+    from app.db import _session_factory
+    from app.models import ItineraryRow, PlaceRow, TripRow
+    from app.routers import trips as trips_router
+
+    monkeypatch.setattr(trips_router, "resolve_destination", lambda d: ("JP", "JPY"))
+    trip_id = client.post("/trips", json={
+        "destination": "pytest-Tokyo", "startDate": "2026-12-01", "endDate": "2026-12-02",
+        "dayStart": "09:00", "dayEnd": "21:00", "travellers": 1, "interests": [], "homeCurrency": "GBP",
+    }).json()["id"]
+    try:
+        with _session_factory()() as db:
+            db.add(ItineraryRow(trip_id=trip_id, data={"days": []}))
+            db.add(PlaceRow(id=f"p_ai{trip_id[-6:]}", trip_id=trip_id, name="AI stop", origin="ai"))
+            db.commit()
+
+        r = client.post(f"/trips/{trip_id}/places", json={"places": [{"name": "Senso-ji", "lat": 35.71, "lng": 139.8}]})
+        assert r.status_code == 200
+        assert client.get(f"/trips/{trip_id}/itinerary").json()["error"] == "no_itinerary"
+        with _session_factory()() as db:
+            origins = list(db.scalars(select(PlaceRow.origin).where(PlaceRow.trip_id == trip_id)))
+        assert origins == ["import"]  # the AI stop for the old plan is gone, the imported place stays
+
+        r = client.post(f"/trips/{DEMO_TRIP_ID}/places", json={"places": [{"name": "x"}]})
+        assert (r.status_code, r.json()["error"]) == (403, "read_only")
+    finally:
+        with _session_factory()() as db:
+            db.execute(delete(TripRow).where(TripRow.id == trip_id))
+            db.commit()

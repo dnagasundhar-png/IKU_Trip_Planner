@@ -1,14 +1,15 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..errors import ApiError
 from ..ids import new_id
-from ..models import PlaceRow
+from ..models import ItineraryRow, PlaceRow
 from ..ratelimit import write_limit
 from ..schemas import Place, PlacesIn, PlacesOut
-from .trips import get_trip_or_404
+from .trips import READ_ONLY_TRIPS, get_trip_or_404
 
 router = APIRouter(prefix="/trips/{trip_id}/places", tags=["places"])
 
@@ -39,8 +40,13 @@ def list_places(trip_id: str, db: Session = Depends(get_db)) -> PlacesOut:
 
 @router.post("", response_model=PlacesOut, dependencies=[Depends(write_limit)])
 def save_places(trip_id: str, body: PlacesIn, db: Session = Depends(get_db)) -> PlacesOut:
-    """Upsert the places the user confirmed after import (origin='import')."""
+    """Upsert the places the user confirmed after import (origin='import').
+
+    New places change what the itinerary should contain, so a stored itinerary (and the stops Gemini
+    added for it) is dropped, as PATCH /trips does; the itinerary page then regenerates."""
     get_trip_or_404(db, trip_id)
+    if trip_id in READ_ONLY_TRIPS:
+        raise ApiError(403, "read_only", "The demo trip can't be changed. Create your own trip to add places.")
 
     # Place IDs are global. If an incoming ID already belongs to another trip
     # (e.g. the importer reused "p1"), or repeats within this request, give it a fresh one.
@@ -66,6 +72,8 @@ def save_places(trip_id: str, body: PlacesIn, db: Session = Depends(get_db)) -> 
             set_={c: stmt.excluded[c] for c in _UPDATABLE},
         )
         db.execute(stmt)
+        db.execute(delete(ItineraryRow).where(ItineraryRow.trip_id == trip_id))
+        db.execute(delete(PlaceRow).where(PlaceRow.trip_id == trip_id, PlaceRow.origin == "ai"))
         db.commit()
 
     return PlacesOut(places=[place_out(PlaceRow(**r)) for r in rows])
