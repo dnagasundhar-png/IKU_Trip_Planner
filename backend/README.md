@@ -35,6 +35,13 @@ Countries without a list aren't blocked.
   rates, no key, fetched against EUR for full precision) -> hardcoded fallback (ECB snapshot from
   2026-10-16 for 29 currencies), so the demo never breaks if the API is down.
 - Every live rate is stored in `fx_rates`, which gives us FX history (e.g. for a rate chart).
+- **Only the ECB's ~30 currencies are covered.** For anything else (e.g. Moroccan dirham, UAE dirham,
+  Vietnamese dong, Egyptian pound) there is no rate, so those costs come out as 0 in the home currency and
+  the page shows them as "Free".
+
+Next Steps: add a second rate source with wider coverage (used only when Frankfurter doesn't have the
+currency), more currencies in the fallback table, and show the local price instead of "Free" when a cost
+can't be converted.
 
 ## How opening hours are handled
 

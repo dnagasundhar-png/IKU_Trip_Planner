@@ -189,6 +189,7 @@ npm run lint && npm run typecheck
 - **TikTok saved folders/collections** have no public API, so import works from pasted links and screenshots instead.
 - **Trip clock** simulates being mid-trip for the demo; a production version would use device location and time.
 - Costs are AI estimates, not live prices.
+- Currency conversion covers the European Central Bank's ~30 currencies. Trips priced in others (e.g. Morocco, the UAE, Vietnam, Egypt) show costs as "Free" for now; wider currency coverage is the next improvement.
 - Travel times are estimated from distance (walking, public transport or train), not live routes or timetables.
 - Holiday data covers public holidays; individual venue closures and opening hours are flagged as "check before going" rather than guaranteed.
 
