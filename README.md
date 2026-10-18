@@ -27,7 +27,9 @@ Planning a trip means twenty open tabs, a camera roll full of TikTok screenshots
 - **Destination-aware interests** — Gemini generates activity options relevant to the chosen places and season.
 - **Link & screenshot import** — TikTok links are resolved via TikTok's oEmbed endpoint (caption + thumbnail); screenshots go to Gemini's multimodal input. Extracted places feed the itinerary.
 - **Structured itinerary generation** — Gemini returns itinerary data as JSON against a fixed schema, so every item can be rendered, edited, costed and re-planned.
-- **Chat-based editing** — natural-language changes applied to the structured itinerary.
+- **Chat-based editing** — natural-language changes (typed or spoken) applied to the structured itinerary. Every change is re-checked on the server (opening hours, holidays, travel time, prices) and saved to the trip.
+- **Travel time between stops** — every stop says how you get there (walk, public transport or train, with minutes and distance), and the plan leaves enough time to do it.
+- **Your own bookings (optional)** — add where you're staying and any flights, trains or buses you've booked, including between cities, when you create the trip or later. The plan works around them: nothing during a journey or the airport run, and each day starts from your accommodation.
 
 ### Date & season awareness
 - **Dates per city** are part of trip input, and every itinerary item has a date.
@@ -211,6 +213,8 @@ npm run lint && npm run typecheck
 - **TikTok saved folders/collections** have no public API, so import works from pasted links and screenshots instead.
 - **Trip clock** simulates being mid-trip for the demo; a production version would use device location and time.
 - Costs are AI estimates, not live prices.
+- Travel times are estimated from distance (walking, public transport or train), not live routes or timetables.
+- A change saved from the itinerary page can't be undone; ask for the change back instead.
 - Holiday data covers public holidays; individual venue closures and opening hours are flagged as "check before going" rather than guaranteed.
 
 ---
